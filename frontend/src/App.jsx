@@ -9,6 +9,7 @@ import SessionReplay from './pages/SessionReplay';
 import TaskAnalytics from './pages/TaskAnalytics';
 import PilotLanding from './pages/PilotLanding';
 import PilotFeedback from './pages/PilotFeedback';
+import PilotReport from './pages/PilotReport';
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated } = useAuth();
@@ -34,6 +35,7 @@ function AppRoutes() {
       <Route path="/dashboard/candidate/:candidateId" element={<ProtectedRoute><CandidateReport /></ProtectedRoute>} />
       <Route path="/dashboard/candidate/:candidateId/session/:taskRunId" element={<ProtectedRoute><SessionReplay /></ProtectedRoute>} />
       <Route path="/dashboard/candidate/:candidateId/analytics" element={<ProtectedRoute><TaskAnalytics /></ProtectedRoute>} />
+      <Route path="/dashboard/pilot-report" element={<ProtectedRoute><PilotReport /></ProtectedRoute>} />
 
       {/* Default redirect */}
       <Route path="/" element={<Navigate to="/pilot" replace />} />

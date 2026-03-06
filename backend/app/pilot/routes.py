@@ -169,3 +169,120 @@ def pilot_analytics(db: DbSession = Depends(get_db)):
         "feedback_responses": feedback_count,
         "avg_feedback": avg_feedback,
     }
+
+
+# ── Protected Report (admin-only) ─────────────────
+
+from app.models.task_run import TaskRun
+from app.assessment.models import Assessment
+
+
+@router.get("/report")
+def pilot_report(
+    db: DbSession = Depends(get_db),
+    token: str = None,  # Accept token as query param for simple auth
+):
+    """Full pilot report — protected. Pass ?token=<JWT_SECRET> to authenticate."""
+    from app.config import settings
+    if token != settings.JWT_SECRET:
+        raise HTTPException(status_code=401, detail="Unauthorized — invalid token")
+
+    org = _get_pilot_org(db)
+
+    # ── All participants ──
+    participants = db.query(PilotParticipant).all()
+
+    participant_reports = []
+    for p in participants:
+        candidate = db.query(Candidate).filter(Candidate.id == p.candidate_id).first()
+        if not candidate:
+            continue
+
+        # Capability scores
+        cap_scores = db.query(CandidateScore).filter(
+            CandidateScore.candidate_id == p.candidate_id
+        ).all()
+        capabilities = {cs.capability: cs.score for cs in cap_scores}
+        avg_score = round(sum(capabilities.values()) / len(capabilities), 1) if capabilities else 0
+
+        # Task evaluations
+        sessions = db.query(Session).filter(Session.candidate_id == p.candidate_id).all()
+        session_ids = [s.id for s in sessions]
+        task_runs = db.query(TaskRun).filter(TaskRun.session_id.in_(session_ids)).all() if session_ids else []
+
+        task_details = []
+        for tr in task_runs:
+            eval_result = db.query(EvaluationResult).filter(
+                EvaluationResult.task_run_id == tr.id
+            ).first()
+            task_details.append({
+                "task_id": tr.task_id,
+                "status": tr.status,
+                "solution": tr.solution[:200] if tr.solution else None,
+                "diagnostic_score": eval_result.diagnostic_score if eval_result else None,
+                "success_score": eval_result.success_score if eval_result else None,
+                "efficiency_score": eval_result.efficiency_score if eval_result else None,
+                "iteration_score": eval_result.iteration_score if eval_result else None,
+                "simulation_runs": eval_result.simulation_runs if eval_result else None,
+            })
+
+        # Feedback
+        feedback = db.query(PilotFeedback).filter(
+            PilotFeedback.candidate_id == p.candidate_id
+        ).first()
+        feedback_data = None
+        if feedback:
+            feedback_data = {
+                "task_realism": feedback.task_realism,
+                "instruction_clarity": feedback.instruction_clarity,
+                "evaluation_fairness": feedback.evaluation_fairness,
+                "difficulty": feedback.difficulty,
+                "overall_experience": feedback.overall_experience,
+                "feedback_text": feedback.feedback_text,
+            }
+
+        participant_reports.append({
+            "candidate_id": p.candidate_id,
+            "name": candidate.name,
+            "email": p.email,
+            "years_experience": p.years_experience,
+            "primary_role": p.primary_role,
+            "llm_experience_level": p.llm_experience_level,
+            "company": p.company,
+            "registered_at": str(p.created_at) if p.created_at else None,
+            "capabilities": capabilities,
+            "avg_score": avg_score,
+            "tasks": task_details,
+            "feedback": feedback_data,
+        })
+
+    # ── Aggregates ──
+    all_scores = [p["avg_score"] for p in participant_reports if p["avg_score"] > 0]
+    all_feedback = [p["feedback"] for p in participant_reports if p["feedback"]]
+
+    avg_feedback_agg = {}
+    for field in ["task_realism", "difficulty", "evaluation_fairness",
+                   "instruction_clarity", "overall_experience"]:
+        vals = [f[field] for f in all_feedback if f.get(field)]
+        avg_feedback_agg[field] = round(sum(vals) / len(vals), 1) if vals else None
+
+    role_breakdown = {}
+    for p in participant_reports:
+        role = p["primary_role"] or "Unknown"
+        role_breakdown.setdefault(role, []).append(p["avg_score"])
+
+    return {
+        "summary": {
+            "total_participants": len(participant_reports),
+            "avg_score": round(sum(all_scores) / len(all_scores), 1) if all_scores else 0,
+            "score_range": {
+                "min": min(all_scores) if all_scores else 0,
+                "max": max(all_scores) if all_scores else 0,
+            },
+            "feedback_responses": len(all_feedback),
+            "avg_feedback": avg_feedback_agg,
+            "by_role": {k: round(sum(v)/len(v), 1) for k, v in role_breakdown.items() if v},
+        },
+        "participants": participant_reports,
+    }
+
