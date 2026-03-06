@@ -24,10 +24,14 @@ class Settings:
 
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
-    CORS_ORIGINS: list = os.getenv(
-        "CORS_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173",
-    ).split(",")
+    CORS_ORIGINS: list = [
+        origin.strip()
+        for origin in os.getenv(
+            "CORS_ORIGINS",
+            "http://localhost:5173,http://127.0.0.1:5173",
+        ).split(",")
+        if origin.strip()
+    ] or ["*"]
 
     # Detect SQLite for engine configuration differences
     @property
