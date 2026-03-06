@@ -53,17 +53,28 @@ export default function TaskPage() {
     const [assessmentComplete, setAssessmentComplete] = useState(false);
 
     // ── Setup: create candidate + assessment ──────────
+    const isPilot = typeof window !== 'undefined' &&
+        (new URLSearchParams(window.location.search).get('pilot') === 'true' ||
+            localStorage.getItem('pilot_candidate_id'));
+
     async function handleStart() {
         setSetupLoading(true);
         setError('');
         try {
-            const cand = await createCandidate(
-                'Assessment Candidate',
-                `candidate_${Date.now()}@assessment.ai`
-            );
-            setCandidateId(cand.candidate_id);
+            let candId = localStorage.getItem('pilot_candidate_id');
 
-            const result = await startAssessment(cand.candidate_id);
+            if (!candId) {
+                // Non-pilot: create new candidate
+                const cand = await createCandidate(
+                    'Assessment Candidate',
+                    `candidate_${Date.now()}@assessment.ai`
+                );
+                candId = cand.candidate_id;
+            }
+
+            setCandidateId(candId);
+
+            const result = await startAssessment(candId);
             setAssessmentId(result.assessment_id);
             setSessionId(result.assessment_id); // for telemetry context
             setTaskRunId(result.task_run_id);
@@ -247,10 +258,16 @@ export default function TaskPage() {
 
                     <button
                         className="btn-primary"
-                        onClick={() => navigate('/dashboard')}
+                        onClick={() => {
+                            if (isPilot) {
+                                navigate(`/pilot/feedback?candidateId=${candidateId}`);
+                            } else {
+                                navigate('/dashboard');
+                            }
+                        }}
                         style={{ marginTop: '1.5rem', fontSize: '0.9rem' }}
                     >
-                        📊 View Dashboard
+                        {isPilot ? '📝 Share Feedback' : '📊 View Dashboard'}
                     </button>
                 </div>
             </div>
