@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg2-binary
+pydantic
+python-dotenv
+python-jose[cryptography]
+structlog
+sentry-sdk[fastapi]
+slowapi
+prometheus-fastapi-instrumentator
+alembic
+celery[redis]
+redis
