@@ -1,138 +1,102 @@
 import axios from 'axios';
 
-const api = axios.create({
-    baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
-    headers: { 'Content-Type': 'application/json' },
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
+let authToken = localStorage.getItem('token');
+let unauthorizedHandler = null;
+
+const client = axios.create({
+  baseURL: API_BASE_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
 });
 
-// ── JWT interceptor ───────────────────────────────
-api.interceptors.request.use((config) => {
-    const token = localStorage.getItem('token');
-    if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
+export function setAuthToken(token) {
+  authToken = token;
+}
+
+export function registerUnauthorizedHandler(handler) {
+  unauthorizedHandler = handler;
+}
+
+client.interceptors.request.use((config) => {
+  if (authToken) {
+    config.headers.Authorization = `Bearer ${authToken}`;
+  }
+  return config;
+});
+
+client.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      authToken = null;
+      localStorage.removeItem('token');
+      unauthorizedHandler?.();
+      if (window.location.pathname !== '/login') {
+        window.location.assign('/login');
+      }
     }
-    return config;
-});
+    return Promise.reject(error);
+  }
+);
 
-export default api;
-
-
-// ── Candidate & Session ───────────────────────────
-export async function createCandidate(name, email, organizationId = null) {
-    const { data } = await api.post('/candidates', {
-        name,
-        email,
-        organization_id: organizationId,
-    });
-    return data;
+function unwrap(response) {
+  return response.data.data;
 }
 
-export async function createSession(candidateId) {
-    const { data } = await api.post('/sessions', { candidate_id: candidateId });
-    return data;
+export async function login(email, password) {
+  return unwrap(await client.post('/auth/login', { email, password }));
 }
 
-// ── Tasks ─────────────────────────────────────────
-export async function startTask(sessionId, taskId) {
-    const { data } = await api.post('/tasks/start', {
-        session_id: sessionId,
-        task_id: taskId,
-    });
-    return data;
+export async function registerOrganization(payload) {
+  return unwrap(await client.post('/organizations/register', payload));
 }
 
-export async function getTaskStatus(taskRunId) {
-    const { data } = await api.get(`/tasks/${taskRunId}`);
-    return data;
+export async function createCandidate(payload) {
+  return unwrap(await client.post('/candidates', payload));
 }
 
-export async function completeTask(taskRunId, solution) {
-    const { data } = await api.post('/tasks/complete', {
-        task_run_id: taskRunId,
-        solution,
-    });
-    return data;
-}
-
-// ── Simulation ────────────────────────────────────
-export async function runSimulation(taskRunId, query, promptTemplate) {
-    const { data } = await api.post('/simulate/rag', {
-        task_run_id: taskRunId,
-        query,
-        prompt_template: promptTemplate,
-    });
-    return data;
-}
-
-// ── Telemetry ─────────────────────────────────────
-export async function sendTelemetry(sessionId, taskId, eventType, payload) {
-    const { data } = await api.post('/telemetry', {
-        session_id: sessionId,
-        task_id: taskId,
-        event_type: eventType,
-        payload,
-    });
-    return data;
-}
-
-// ── Evaluation & Scoring ──────────────────────────
-export async function runEvaluation(taskRunId) {
-    const { data } = await api.post('/evaluation/run', {
-        task_run_id: taskRunId,
-    });
-    return data;
-}
-
-export async function computeScores(candidateId) {
-    const { data } = await api.post('/scores/compute', {
-        candidate_id: candidateId,
-    });
-    return data;
-}
-
-// ── Dashboard (read-only) ─────────────────────────
 export async function listCandidates() {
-    const { data } = await api.get('/dashboard/candidates');
-    return data;
+  return unwrap(await client.get('/candidates'));
 }
 
-export async function getCandidateProfile(candidateId) {
-    const { data } = await api.get(`/dashboard/candidates/${candidateId}/profile`);
-    return data;
+export async function createAssessment(payload) {
+  return unwrap(await client.post('/assessments', payload));
 }
 
-export async function getCandidateTasks(candidateId) {
-    const { data } = await api.get(`/dashboard/candidates/${candidateId}/tasks`);
-    return data;
+export async function getAssessment(assessmentId) {
+  return unwrap(await client.get(`/assessments/${assessmentId}`));
 }
 
-export async function getTaskRunTelemetry(taskRunId) {
-    const { data } = await api.get(`/dashboard/task-runs/${taskRunId}/telemetry`);
-    return data;
+export async function getTask(taskRunId) {
+  return unwrap(await client.get(`/tasks/${taskRunId}`));
 }
 
-export async function getTaskRunEvaluation(taskRunId) {
-    const { data } = await api.get(`/dashboard/task-runs/${taskRunId}/evaluation`);
-    return data;
+export async function runSimulation(payload) {
+  return unwrap(await client.post('/simulations/run', payload));
 }
 
-// ── Assessment Orchestrator ───────────────────────
-export async function startAssessment(candidateId) {
-    const { data } = await api.post('/assessments/start', {
-        candidate_id: candidateId,
-    });
-    return data;
+export async function sendTelemetry(payload) {
+  return unwrap(await client.post('/telemetry', payload));
 }
 
-export async function advanceAssessment(assessmentId, taskRunId, solution) {
-    const { data } = await api.post(`/assessments/${assessmentId}/advance`, {
-        task_run_id: taskRunId,
-        solution,
-    });
-    return data;
+export async function submitAssessment(assessmentId, payload) {
+  return unwrap(await client.post(`/assessments/${assessmentId}/submit`, payload));
 }
 
-export async function getAssessmentStatus(assessmentId) {
-    const { data } = await api.get(`/assessments/${assessmentId}`);
-    return data;
+export async function getDashboardCandidates() {
+  return unwrap(await client.get('/dashboard/candidates'));
+}
+
+export async function getDashboardCandidateProfile(candidateId) {
+  return unwrap(await client.get(`/dashboard/candidates/${candidateId}/profile`));
+}
+
+export async function getDashboardTaskRuns(candidateId) {
+  return unwrap(await client.get(`/dashboard/candidates/${candidateId}/task-runs`));
+}
+
+export async function getReplay(taskRunId) {
+  return unwrap(await client.get(`/dashboard/task-runs/${taskRunId}/replay`));
 }

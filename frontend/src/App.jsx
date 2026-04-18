@@ -1,54 +1,61 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider, useAuth } from './context/AuthContext';
-import LoginPage from './pages/LoginPage';
-import TaskPage from './pages/TaskPage';
-import Dashboard from './pages/Dashboard';
-import CandidateList from './pages/CandidateList';
-import CandidateReport from './pages/CandidateReport';
-import SessionReplay from './pages/SessionReplay';
-import TaskAnalytics from './pages/TaskAnalytics';
-import PilotLanding from './pages/PilotLanding';
-import PilotFeedback from './pages/PilotFeedback';
-import PilotReport from './pages/PilotReport';
+import { Navigate, Route, Routes } from 'react-router-dom';
 
-function ProtectedRoute({ children }) {
-  const { isAuthenticated } = useAuth();
-  return isAuthenticated ? children : <Navigate to="/login" replace />;
-}
+import { useAuth } from './context/useAuth.js';
+import AssessmentPage from './pages/AssessmentPage.jsx';
+import DashboardPage from './pages/DashboardPage.jsx';
+import LoginPage from './pages/LoginPage.jsx';
 
-function AppRoutes() {
-  return (
-    <Routes>
-      {/* Public */}
-      <Route path="/login" element={<LoginPage />} />
-
-      {/* Pilot (public) */}
-      <Route path="/pilot" element={<PilotLanding />} />
-      <Route path="/pilot/feedback" element={<PilotFeedback />} />
-
-      {/* Candidate assessment (public — candidates use a link) */}
-      <Route path="/assess" element={<TaskPage />} />
-
-      {/* Protected hiring dashboard */}
-      <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-      <Route path="/dashboard/candidates" element={<ProtectedRoute><CandidateList /></ProtectedRoute>} />
-      <Route path="/dashboard/candidate/:candidateId" element={<ProtectedRoute><CandidateReport /></ProtectedRoute>} />
-      <Route path="/dashboard/candidate/:candidateId/session/:taskRunId" element={<ProtectedRoute><SessionReplay /></ProtectedRoute>} />
-      <Route path="/dashboard/candidate/:candidateId/analytics" element={<ProtectedRoute><TaskAnalytics /></ProtectedRoute>} />
-      <Route path="/dashboard/pilot-report" element={<ProtectedRoute><PilotReport /></ProtectedRoute>} />
-
-      {/* Default redirect */}
-      <Route path="/" element={<Navigate to="/pilot" replace />} />
-    </Routes>
-  );
+function ProtectedRoute({ allowedRoles, children }) {
+  const { isAuthenticated, user } = useAuth();
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+  if (allowedRoles && !allowedRoles.includes(user.role)) {
+    return <Navigate to={user.role === 'candidate' ? '/assessment' : '/dashboard'} replace />;
+  }
+  return children;
 }
 
 export default function App() {
+  const { isAuthenticated, user } = useAuth();
+
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <AppRoutes />
-      </BrowserRouter>
-    </AuthProvider>
+    <Routes>
+      <Route
+        path="/login"
+        element={
+          isAuthenticated ? (
+            <Navigate to={user.role === 'candidate' ? '/assessment' : '/dashboard'} replace />
+          ) : (
+            <LoginPage />
+          )
+        }
+      />
+      <Route
+        path="/assessment"
+        element={
+          <ProtectedRoute allowedRoles={['candidate']}>
+            <AssessmentPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/dashboard"
+        element={
+          <ProtectedRoute allowedRoles={['admin', 'reviewer']}>
+            <DashboardPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/"
+        element={
+          <Navigate
+            to={isAuthenticated ? (user.role === 'candidate' ? '/assessment' : '/dashboard') : '/login'}
+            replace
+          />
+        }
+      />
+    </Routes>
   );
 }

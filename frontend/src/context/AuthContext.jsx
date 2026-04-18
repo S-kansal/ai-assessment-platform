@@ -1,48 +1,57 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
-const AuthContext = createContext(null);
+import { AuthContext } from './auth-context.js';
+import { registerUnauthorizedHandler, setAuthToken } from '../services/api.js';
 
-export function AuthProvider({ children }) {
-    const [user, setUser] = useState(null);
-    const [token, setToken] = useState(localStorage.getItem('token'));
+function decodeToken(token) {
+  if (!token) {
+    return null;
+  }
 
-    useEffect(() => {
-        if (token) {
-            try {
-                const payload = JSON.parse(atob(token.split('.')[1]));
-                setUser({
-                    userId: payload.user_id,
-                    organizationId: payload.organization_id,
-                    role: payload.role,
-                    email: payload.email,
-                });
-            } catch {
-                logout();
-            }
-        }
-    }, [token]);
-
-    function login(tokenStr, userData) {
-        localStorage.setItem('token', tokenStr);
-        setToken(tokenStr);
-        setUser(userData);
-    }
-
-    function logout() {
-        localStorage.removeItem('token');
-        setToken(null);
-        setUser(null);
-    }
-
-    return (
-        <AuthContext.Provider value={{ user, token, login, logout, isAuthenticated: !!token }}>
-            {children}
-        </AuthContext.Provider>
-    );
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    return {
+      userId: payload.sub,
+      organizationId: payload.organization_id,
+      role: payload.role,
+      candidateId: payload.candidate_id,
+    };
+  } catch {
+    return null;
+  }
 }
 
-export function useAuth() {
-    const ctx = useContext(AuthContext);
-    if (!ctx) throw new Error('useAuth must be used within AuthProvider');
-    return ctx;
+export function AuthProvider({ children }) {
+  const [token, setToken] = useState(() => localStorage.getItem('token'));
+  const user = useMemo(() => decodeToken(token), [token]);
+
+  useEffect(() => {
+    if (token) {
+      localStorage.setItem('token', token);
+    } else {
+      localStorage.removeItem('token');
+    }
+    setAuthToken(token);
+  }, [token]);
+
+  useEffect(() => {
+    registerUnauthorizedHandler(() => setToken(null));
+  }, []);
+
+  const value = useMemo(
+    () => ({
+      token,
+      user,
+      isAuthenticated: Boolean(user),
+      login(nextToken) {
+        setToken(nextToken);
+      },
+      logout() {
+        setToken(null);
+      },
+    }),
+    [token, user]
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
