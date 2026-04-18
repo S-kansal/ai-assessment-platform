@@ -1,70 +1,53 @@
 # AI Engineering Assessment Platform
 
-A simulation-based hiring assessment platform that evaluates AI engineers on real-world skills — RAG pipeline debugging, prompt engineering, and AI system failure diagnosis.
-
----
-
 ## Overview
-
-Traditional coding interviews test algorithmic knowledge. This platform tests the work AI engineers actually do: debugging broken retrieval pipelines, fixing unstable prompts, and diagnosing why a system is hallucinating.
-
-Candidates interact with deterministic AI system simulations. Their every action — prompt edits, retrieval inspections, simulation runs, written diagnoses — is captured as telemetry and scored across five dimensions.
-
----
-
-## Architecture
-
-```
-Candidate Interface  →  Task Engine  →  Simulation Engine
-                                    ↓
-                         Telemetry Engine
-                                    ↓
-                         Evaluation Engine
-                                    ↓
-                          Scoring Engine
-                                    ↓
-                     Hiring Manager Dashboard
-```
-
-**Backend:** FastAPI + SQLAlchemy + SQLite (dev) / PostgreSQL (prod)
-**Frontend:** React + Vite + Tailwind CSS
-**Auth:** JWT (HS256) with role-based access control
-**Multi-tenancy:** All data scoped by `organization_id`
-
----
+AI Engineering Assessment Platform is a multi-tenant SaaS system for evaluating AI application engineers through deterministic debugging tasks instead of conventional coding quizzes. Candidates interact with simulated broken RAG pipelines, revise prompts, inspect logs, and submit diagnoses while the platform records their behavior and evaluates both process and outcome. The system is built for organizations that need evidence about real AI-system debugging ability, not just theoretical knowledge. The repository includes a FastAPI backend, a React frontend, deployment assets, and architecture documentation.
 
 ## Features
+- Multi-tenant organizations, users, and candidate accounts with JWT-based role enforcement.
+- Candidate assessment workspace for prompt editing, query submission, simulation runs, telemetry capture, and solution submission.
+- Deterministic simulation engine for irrelevant retrieval, incorrect chunking, prompt grounding failure, and low-confidence hallucination.
+- Telemetry engine that stores prompt edits, query submissions, log inspections, simulation views, and submissions against the active task run.
+- Evaluation engine with explicit formulas for diagnostic accuracy, solution success, efficiency, and iteration quality.
+- Scoring engine that aggregates task-level results into weighted capability profiles.
+- Reviewer dashboard for candidate lists, capability profiles, task drill-down, and session replay.
+- Health checks, rate limiting, request IDs, Docker assets, and GitHub Actions CI configuration.
 
-- **3 RAG debugging tasks** — irrelevant retrieval, bad chunking, context-ignored prompt
-- **Deterministic simulations** — same input always produces same output; candidates are compared fairly
-- **Telemetry capture** — every action logged with timestamps (simulation runs, prompt edits, retrieval inspections, solution submissions)
-- **Rule-based evaluation** — diagnostic accuracy, task success, debugging efficiency, iteration quality
-- **Capability scoring** — weighted composite score mapped to capability profile (RAG debugging, prompt engineering)
-- **Hiring manager dashboard** — candidate scorecards, capability radar charts, session replay, task-level breakdowns
-- **Pilot program flow** — public registration, assessment, post-assessment feedback survey
+## Architecture
+The backend is organized around explicit subsystems. `assessment/` manages task sequencing and assessment lifecycle state. `simulation/` produces deterministic outputs for predefined RAG scenarios and failure modes. `telemetry/` records candidate actions as organization-owned events. `evaluation/` transforms task telemetry plus simulation history into deterministic behavioral scores. `scoring/` aggregates task evaluations into candidate capability profiles. `routes/` exposes these services through FastAPI with tenant-aware auth and consistent response envelopes.
 
----
+The frontend is a standard React application built with Vite. It provides a candidate workspace that exercises the assessment flow and a reviewer dashboard that reads candidate, replay, and scoring data from the backend. API requests are scoped by JWT, and the client routes separate candidate and reviewer experiences by role.
 
-## Quick Start
-
-### Prerequisites
-
-- Python 3.11+
-- Node.js 20+
-
-### Backend
+## Local Development Setup
+Clone the repository and install the backend dependencies:
 
 ```bash
-cd backend
-python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
+git clone <repo-url>
+cd ai-assessment-platform
+python -m venv .venv
+.venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env          # or create .env with DATABASE_URL and JWT_SECRET
-uvicorn app.main:app --reload --port 8000
 ```
 
-The API is now at `http://localhost:8000`. Swagger docs at `http://localhost:8000/docs`.
+Create a local environment file from the example values:
 
-### Frontend
+```bash
+copy infra\.env.example .env
+```
+
+Run the initial migration:
+
+```bash
+alembic -c backend/alembic.ini upgrade head
+```
+
+Start the backend:
+
+```bash
+uvicorn app.main:app --app-dir backend --reload
+```
+
+Start the frontend in a second terminal:
 
 ```bash
 cd frontend
@@ -72,177 +55,47 @@ npm install
 npm run dev
 ```
 
-The app is at `http://localhost:5173`.
-
----
-
 ## Environment Variables
-
-### Backend (`backend/.env`)
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `DATABASE_URL` | No | `sqlite:///./local.db` | SQLAlchemy connection string |
-| `JWT_SECRET` | Yes | insecure default | Secret key for JWT signing |
-| `CORS_ORIGINS` | No | `http://localhost:5173` | Comma-separated allowed origins |
-| `LOG_LEVEL` | No | `INFO` | Logging level |
-| `SENTRY_DSN` | No | — | Sentry error tracking DSN |
-| `REDIS_URL` | No | — | Redis URL for Celery (optional) |
-
-### Frontend (`frontend/.env`)
-
-| Variable | Default | Description |
-|---|---|---|
-| `VITE_API_BASE_URL` | `/api` | Backend API base URL |
-
----
+- `ENVIRONMENT` (required in shared deployments, optional locally): application environment label. Example: `development`
+- `DEBUG` (optional): enables debug-oriented error detail. Example: `false`
+- `API_PREFIX` (optional): route prefix for the HTTP API. Example: `/api`
+- `FRONTEND_URL` (optional): canonical frontend base URL. Example: `http://localhost:5173`
+- `CORS_ORIGINS` (required for browser access): JSON-style list of allowed origins. Example: `["http://localhost:5173","http://127.0.0.1:5173"]`
+- `DATABASE_URL` (required): SQLAlchemy database URL. Example: `postgresql+psycopg://postgres:postgres@localhost:5432/ai_assessment`
+- `REDIS_URL` (optional): reserved for future background or caching infrastructure. Example: `redis://localhost:6379/0`
+- `JWT_SECRET_KEY` (required): JWT signing key. Example: `replace-me-with-a-long-random-secret`
+- `JWT_ALGORITHM` (optional): JWT signing algorithm. Example: `HS256`
+- `JWT_ACCESS_TOKEN_MINUTES` (optional): token lifetime in minutes. Example: `120`
+- `REQUEST_RATE_LIMIT_PER_MINUTE` (optional): per-tenant per-endpoint request limit. Example: `120`
+- `EVALUATION_RATE_LIMIT_PER_MINUTE` (optional): tighter limit for evaluation endpoints. Example: `20`
+- `ASSESSMENT_TIMEOUT_MINUTES` (optional): maximum duration for an assessment. Example: `60`
+- `DEFAULT_SEQUENCE_MODE` (optional): default task ordering mode. Example: `fixed`
+- `SIMULATION_SEED` (optional): deterministic seed used by the simulation engine. Example: `11`
+- `LOG_LEVEL` (optional): application log level. Example: `INFO`
 
 ## API Overview
+Authentication routes live under `/api/auth` and are public only for login. The main endpoint is `POST /api/auth/login`, which returns the JWT used by all protected routes.
 
-### Auth
+Organization routes live under `/api/organizations`. `POST /api/organizations/register` creates the organization and first admin, and `GET /api/organizations/me` returns the authenticated tenant.
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/org/register` | Register organization + admin user |
-| `POST` | `/auth/login` | Login, returns JWT token |
+Candidate routes live under `/api/candidates`. `POST /api/candidates` creates candidate accounts, `GET /api/candidates` lists candidates for the current organization, and `GET /api/candidates/{candidate_id}` returns one candidate while enforcing candidate self-access limits.
 
-### Assessment Flow (Candidate)
+Assessment routes live under `/api/assessments`. `POST /api/assessments` creates and starts an assessment, `GET /api/assessments/{assessment_id}` returns progress, `POST /api/assessments/{assessment_id}/submit` submits the current task and advances the flow, and `POST /api/assessments/{assessment_id}/timeout` closes timed-out sessions.
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/assessments/start` | Start multi-task assessment |
-| `POST` | `/assessments/{id}/advance` | Submit current task, advance to next |
-| `GET` | `/assessments/{id}` | Get assessment status |
-| `POST` | `/simulate/rag` | Run RAG simulation |
-| `POST` | `/telemetry` | Log a candidate action |
+Task and simulation routes live under `/api/tasks` and `/api/simulations`. `GET /api/tasks/{task_run_id}` returns task context, and `POST /api/simulations/run` executes the deterministic RAG simulation for a task run.
 
-### Dashboard (Hiring Manager — requires JWT)
+Telemetry routes live under `/api/telemetry`. `POST /api/telemetry` records a telemetry event and `GET /api/telemetry/{task_run_id}` returns task-run events.
 
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/dashboard/candidates` | List org candidates (paginated) |
-| `GET` | `/dashboard/candidates/{id}/profile` | Capability profile |
-| `GET` | `/dashboard/candidates/{id}/tasks` | Task performance breakdown |
-| `GET` | `/dashboard/task-runs/{id}/telemetry` | Session telemetry |
-| `GET` | `/dashboard/task-runs/{id}/evaluation` | Evaluation scores |
+Evaluation and scoring routes live under `/api/evaluations` and `/api/scores`. `POST /api/evaluations/{task_run_id}/run` recomputes task evaluation, `GET /api/evaluations/{task_run_id}` reads it, `POST /api/scores/{assessment_id}/compute` recomputes scoring, and `GET /api/scores/{assessment_id}` reads the stored capability profile.
 
-### Pilot Program (Public)
+Reviewer dashboard routes live under `/api/dashboard`. `GET /api/dashboard/candidates` returns the candidate list, `GET /api/dashboard/candidates/{candidate_id}/profile` returns the high-level score view, `GET /api/dashboard/candidates/{candidate_id}/task-runs` provides task-level drill-down, and `GET /api/dashboard/task-runs/{task_run_id}/replay` returns replay data.
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/pilot/register` | Register pilot participant |
-| `POST` | `/pilot/feedback` | Submit post-assessment feedback |
-| `GET` | `/pilot/analytics` | Aggregate pilot stats |
-| `GET` | `/pilot/report` | Full report (admin JWT required) |
+## Assessment Lifecycle
+An organization admin registers a tenant and creates candidate accounts. Each candidate signs in with a candidate-role JWT, then starts an assessment that binds the candidate, organization, browser session, and task sequence into one assessment record. The orchestrator creates the first task run and the candidate opens the task context through the tasks API.
 
----
+While the candidate works, the frontend alternates between simulation runs and telemetry writes. Simulation requests produce deterministic outputs based on the task scenario and active failure modes. Telemetry captures prompt edits, query submissions, log inspections, simulation views, and solution submissions with monotonic timestamps so the system can replay the candidate's behavior later.
 
-## Assessment Flow
-
-1. Candidate visits `/pilot` or `/assess`
-2. Registers (or starts directly)
-3. `POST /assessments/start` — creates session, starts task 1
-4. Candidate runs simulations, edits prompts, inspects retrieval logs
-5. Each action emits a telemetry event via `POST /telemetry`
-6. Candidate submits diagnosis + fix via `POST /assessments/{id}/advance`
-7. Platform evaluates task, starts task 2 (or completes assessment)
-8. On completion: scoring runs, capability profile generated
-9. Candidate optionally completes feedback survey
-10. Hiring manager reviews candidate in dashboard
-
----
-
-## Scoring Model
-
-Scores are calculated per task then aggregated by capability:
-
-| Dimension | Weight | Signal |
-|---|---|---|
-| Diagnostic Accuracy | 40% | Did the solution text match failure-mode keywords? |
-| Task Success | 30% | Solution submitted + at least one simulation run |
-| Efficiency | 20% | Fewer simulation runs = more targeted debugging |
-| Iteration Quality | 10% | Inspected retrieval before editing; balanced edit/run ratio |
-
-**Capability map:**
-
-| Task | Capability |
-|---|---|
-| `rag_debug_01` | `rag_debugging` |
-| `rag_debug_02` | `rag_debugging` |
-| `rag_debug_03` | `prompt_engineering` |
-
----
+When the candidate submits a task, the orchestrator closes that task run, evaluates it, and either opens the next task run or completes the assessment. The evaluation engine computes explicit dimension scores for diagnostic accuracy, solution success, efficiency, and iteration quality. After the final task, the scoring engine aggregates those task results into weighted raw and normalized capability scores that reviewers can inspect in the dashboard.
 
 ## Deployment
-
-### Backend — Render
-
-The `render.yaml` at the repo root configures a web service:
-
-```
-Build: pip install -r requirements.txt
-Start: uvicorn app.main:app --host 0.0.0.0 --port 10000
-Root:  backend/
-```
-
-Set `DATABASE_URL`, `JWT_SECRET`, and `CORS_ORIGINS` in the Render environment dashboard.
-
-### Frontend — Vercel
-
-Push to `main`. Vercel auto-deploys. The `frontend/vercel.json` proxies `/api/*` requests to the Render backend URL.
-
-Set `VITE_API_BASE_URL` to your Render service URL in Vercel's environment settings, or leave it as `/api` to use the proxy rewrite.
-
-### Docker
-
-A `Dockerfile` in `backend/` builds the API image:
-
-```bash
-docker build -t ai-assessment-api ./backend
-docker run -p 8000:8000 --env-file backend/.env ai-assessment-api
-```
-
----
-
-## Project Structure
-
-```
-.
-├── backend/
-│   ├── app/
-│   │   ├── assessment/      # Multi-task orchestrator, routes
-│   │   ├── auth/            # JWT, user models, tenant guard
-│   │   ├── core/            # Logging, rate limiting, Celery config
-│   │   ├── evaluation/      # Evaluator pipeline, rules, metrics
-│   │   ├── models/          # SQLAlchemy ORM models
-│   │   ├── org/             # Organization (tenant) model
-│   │   ├── pilot/           # Pilot program routes and models
-│   │   ├── routes/          # API route handlers
-│   │   ├── scoring/         # Score calculator, aggregator, capability map
-│   │   ├── services/        # Telemetry service
-│   │   ├── simulation/      # RAG simulator, failure modes, documents
-│   │   └── tasks/           # Task runner, task definitions
-│   ├── migrations/          # Alembic migration scripts
-│   ├── requirements.txt
-│   └── Dockerfile
-├── frontend/
-│   ├── src/
-│   │   ├── components/      # Reusable UI components
-│   │   ├── context/         # Auth context
-│   │   ├── pages/           # Route pages
-│   │   └── services/        # API client
-│   └── package.json
-├── render.yaml
-└── README.md
-```
-
----
-
-## Security Notes
-
-- Passwords are hashed with bcrypt via passlib
-- All API endpoints that return tenant data require a valid JWT
-- Dashboard routes enforce `organization_id` scoping on every query
-- The pilot report endpoint requires the `admin` role
-- Rate limiting is applied to simulation endpoints (30 req/min per IP)
-- Security headers (X-Content-Type-Options, X-Frame-Options, etc.) are added to all responses
+The repository includes Docker assets under `infra/`. Build the backend image with `docker build -f infra/Dockerfile -t ai-assessment-platform .` or use `docker compose -f infra/docker-compose.yml up --build` to start the API, PostgreSQL, and Redis together. Set production environment variables through your deployment platform, run `alembic -c backend/alembic.ini upgrade head` against the target database before starting the application, and serve the frontend with `npm run build` output behind the same API base path or a reverse proxy.
