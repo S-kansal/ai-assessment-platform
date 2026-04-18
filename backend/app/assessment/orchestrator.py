@@ -51,6 +51,7 @@ def start_assessment(db: DbSession, candidate_id: str, session_id: str,
 
     return {
         "assessment_id": assessment.id,
+        "session_id": session_id,
         "status": assessment.status,
         "first_task": first_at.task_id,
         "task_run_id": task_result["task_run_id"],
@@ -88,8 +89,9 @@ def advance_assessment(db: DbSession, assessment_id: str,
     # Evaluate the task
     try:
         evaluate_task_run(db, task_run_id)
-    except Exception:
-        pass  # evaluation may fail gracefully
+    except Exception as e:
+        from app.core.logging import get_logger
+        get_logger("orchestrator").warning("evaluation_failed", task_run_id=task_run_id, error=str(e))
 
     # Check for next task
     all_tasks = svc.get_assessment_tasks(db, assessment_id)
@@ -153,15 +155,23 @@ def _complete_assessment(db: DbSession, assessment: Assessment,
     caps = scores.get("capabilities", {})
     final_score = round(sum(caps.values()) / len(caps), 1) if caps else 0
 
-    # Store assessment result snapshot
-    db.add(AssessmentResult(
-        assessment_id=assessment.id,
-        candidate_id=assessment.candidate_id,
-        session_id=assessment.session_id,
-        final_score=final_score,
-        capability_profile=caps,
-        evaluation_summary=eval_summary,
-    ))
+    # Store assessment result snapshot (upsert by assessment_id)
+    existing_ar = db.query(AssessmentResult).filter(
+        AssessmentResult.assessment_id == assessment.id
+    ).first()
+    if existing_ar:
+        existing_ar.final_score = final_score
+        existing_ar.capability_profile = caps
+        existing_ar.evaluation_summary = eval_summary
+    else:
+        db.add(AssessmentResult(
+            assessment_id=assessment.id,
+            candidate_id=assessment.candidate_id,
+            session_id=assessment.session_id,
+            final_score=final_score,
+            capability_profile=caps,
+            evaluation_summary=eval_summary,
+        ))
     db.commit()
 
     return {

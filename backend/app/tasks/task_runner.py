@@ -16,7 +16,6 @@ from app.models.task import Task
 from app.models.task_run import TaskRun
 from app.models.session import Session
 from app.tasks.task_definitions import TASK_LIBRARY
-from app.tasks.task_state import TaskState
 
 
 def create_task_run(
@@ -82,6 +81,7 @@ def create_task_run(
         task_id=task_id,
         attempt_number=attempt_number,
         status="running",
+        organization_id=session.organization_id,
     )
     db.add(task_run)
     db.commit()

@@ -1,8 +1,7 @@
 """Authentication service — registration, login, password hashing."""
 
 import re
-import hashlib
-import secrets
+from passlib.context import CryptContext
 from sqlalchemy.orm import Session as DbSession
 from fastapi import HTTPException
 
@@ -13,18 +12,15 @@ from app.core.logging import get_logger
 
 logger = get_logger("auth")
 
+_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
 
 def _hash_password(password: str) -> str:
-    """Hash a password with a random salt using SHA-256."""
-    salt = secrets.token_hex(16)
-    hashed = hashlib.sha256(f"{salt}:{password}".encode()).hexdigest()
-    return f"{salt}${hashed}"
+    return _pwd_context.hash(password)
 
 
 def _verify_password(password: str, stored_hash: str) -> bool:
-    """Verify a password against the stored hash."""
-    salt, hashed = stored_hash.split("$", 1)
-    return hashlib.sha256(f"{salt}:{password}".encode()).hexdigest() == hashed
+    return _pwd_context.verify(password, stored_hash)
 
 
 def _slugify(name: str) -> str:

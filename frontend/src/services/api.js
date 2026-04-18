@@ -65,10 +65,10 @@ export async function runSimulation(taskRunId, query, promptTemplate) {
 }
 
 // ── Telemetry ─────────────────────────────────────
-export async function sendTelemetry(sessionId, taskRunId, eventType, payload) {
+export async function sendTelemetry(sessionId, taskId, eventType, payload) {
     const { data } = await api.post('/telemetry', {
         session_id: sessionId,
-        task_id: taskRunId,
+        task_id: taskId,
         event_type: eventType,
         payload,
     });
@@ -133,6 +133,6 @@ export async function advanceAssessment(assessmentId, taskRunId, solution) {
 }
 
 export async function getAssessmentStatus(assessmentId) {
-    const { data } = await api.get(`/assessments/assessments/${assessmentId}`);
+    const { data } = await api.get(`/assessments/${assessmentId}`);
     return data;
 }

@@ -11,12 +11,10 @@ export default function PilotReport() {
     useEffect(() => {
         async function fetchReport() {
             try {
-                // Use the JWT token stored in localStorage as the admin key
-                const adminToken = localStorage.getItem('jwt_secret') || token;
-                const { data } = await api.get(`/pilot/report?token=${adminToken}`);
+                const { data } = await api.get('/pilot/report');
                 setReport(data);
             } catch (err) {
-                setError(err.response?.data?.detail || 'Failed to load report. Check your admin token.');
+                setError(err.response?.data?.detail || 'Failed to load report. Admin access required.');
             }
             setLoading(false);
         }
@@ -29,11 +27,11 @@ export default function PilotReport() {
         return (
             <div style={S.page}>
                 <div style={S.card}>
-                    <h2 style={S.title}>🔒 Pilot Report</h2>
+                    <h2 style={S.title}>Pilot Report</h2>
                     <p style={S.error}>{error || 'No report data'}</p>
                     <p style={S.muted}>
-                        Set your admin token in localStorage:<br />
-                        <code style={S.code}>localStorage.setItem('jwt_secret', 'YOUR_JWT_SECRET')</code>
+                        This page requires an admin account. Sign in at{' '}
+                        <a href="/login" style={{ color: '#38bdf8' }}>/login</a> with admin credentials.
                     </p>
                 </div>
             </div>

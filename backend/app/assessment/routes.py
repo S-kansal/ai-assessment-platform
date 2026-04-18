@@ -89,7 +89,7 @@ def start_assessment_endpoint(body: StartRequest, db: DbSession = Depends(get_db
 # GET /assessments/{assessment_id}
 # ---------------------------------------------------------------------------
 
-@router.get("/assessments/{assessment_id}")
+@router.get("/{assessment_id}")
 def get_status_endpoint(assessment_id: str, db: DbSession = Depends(get_db)):
     """Get current assessment progress."""
     return get_assessment_status(db, assessment_id)

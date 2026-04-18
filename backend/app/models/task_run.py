@@ -11,6 +11,9 @@ class TaskRun(Base):
     __tablename__ = "task_runs"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    organization_id = Column(
+        String(36), ForeignKey("organizations.id"), nullable=True,
+    )
     session_id = Column(
         String(36),
         ForeignKey("sessions.id"),
@@ -30,4 +33,3 @@ class TaskRun(Base):
     completed_at = Column(DateTime, nullable=True)
     status = Column(String(32), default="pending", nullable=False)
     solution = Column(Text, nullable=True)
-

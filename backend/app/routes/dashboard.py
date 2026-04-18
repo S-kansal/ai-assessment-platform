@@ -77,15 +77,19 @@ class EvaluationDetail(BaseModel):
 
 @router.get("/candidates", response_model=List[CandidateListItem])
 def list_candidates(
+    offset: int = 0,
+    limit: int = 50,
     db: DbSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    """List candidates belonging to the current organization."""
+    """List candidates belonging to the current organization (paginated)."""
     org_id = user["organization_id"]
     candidates = (
         db.query(Candidate)
         .filter(Candidate.organization_id == org_id)
         .order_by(Candidate.created_at.desc())
+        .offset(offset)
+        .limit(min(limit, 200))
         .all()
     )
     return [CandidateListItem(id=c.id, name=c.name, email=c.email) for c in candidates]
@@ -193,8 +197,12 @@ def get_task_run_telemetry(
     db: DbSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    """Get telemetry events for a task run."""
-    tr = db.query(TaskRun).filter(TaskRun.id == task_run_id).first()
+    """Get telemetry events for a task run (tenant-scoped)."""
+    org_id = user["organization_id"]
+    tr = db.query(TaskRun).filter(
+        TaskRun.id == task_run_id,
+        TaskRun.organization_id == org_id,
+    ).first()
     if not tr:
         raise HTTPException(status_code=404, detail="Task run not found")
 
@@ -226,7 +234,15 @@ def get_task_run_evaluation(
     db: DbSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    """Get evaluation result for a task run."""
+    """Get evaluation result for a task run (tenant-scoped)."""
+    org_id = user["organization_id"]
+    tr = db.query(TaskRun).filter(
+        TaskRun.id == task_run_id,
+        TaskRun.organization_id == org_id,
+    ).first()
+    if not tr:
+        raise HTTPException(status_code=404, detail="Task run not found")
+
     ev = db.query(EvaluationResult).filter(EvaluationResult.task_run_id == task_run_id).first()
     if not ev:
         raise HTTPException(status_code=404, detail="Evaluation not found")

@@ -31,33 +31,6 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     task_track_started=True,
-    task_time_limit=300,  # 5 minute hard limit
-    task_soft_time_limit=240,  # 4 minute soft limit
+    task_time_limit=300,
+    task_soft_time_limit=240,
 )
-
-
-# ── Example background tasks ──────────────────────
-@celery_app.task(name="run_evaluation")
-def run_evaluation_task(task_run_id: str):
-    """Run evaluation pipeline asynchronously."""
-    from app.database import SessionLocal
-    from app.evaluation.evaluator import evaluate_task_run
-
-    db = SessionLocal()
-    try:
-        evaluate_task_run(db, task_run_id)
-    finally:
-        db.close()
-
-
-@celery_app.task(name="compute_scores")
-def compute_scores_task(candidate_id: str):
-    """Compute candidate capability scores asynchronously."""
-    from app.database import SessionLocal
-    from app.scoring.scoring_service import compute_candidate_scores
-
-    db = SessionLocal()
-    try:
-        compute_candidate_scores(db, candidate_id)
-    finally:
-        db.close()

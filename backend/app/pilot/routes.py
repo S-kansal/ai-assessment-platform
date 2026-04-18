@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session as DbSession
 from sqlalchemy import func
 
 from app.database import get_db
+from app.auth.tenant_guard import require_role
 from app.models.candidate import Candidate
 from app.models.session import Session
 from app.models.telemetry import TelemetryEvent
@@ -180,12 +181,9 @@ from app.assessment.models import Assessment
 @router.get("/report")
 def pilot_report(
     db: DbSession = Depends(get_db),
-    token: str = None,  # Accept token as query param for simple auth
+    user: dict = Depends(require_role("admin")),
 ):
-    """Full pilot report — protected. Pass ?token=<JWT_SECRET> to authenticate."""
-    from app.config import settings
-    if token != settings.JWT_SECRET:
-        raise HTTPException(status_code=401, detail="Unauthorized — invalid token")
+    """Full pilot report — admin only."""
 
     org = _get_pilot_org(db)
 

@@ -36,6 +36,8 @@ def compute_candidate_scores(db: DbSession, candidate_id: str) -> Dict:
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
 
+    org_id = candidate.organization_id
+
     # --- Load all sessions for this candidate ---
     sessions = db.query(Session).filter(Session.candidate_id == candidate_id).all()
     if not sessions:
@@ -101,6 +103,7 @@ def compute_candidate_scores(db: DbSession, candidate_id: str) -> Dict:
                 task_id=task_id,
                 task_score=score,
                 capability=capability,
+                organization_id=org_id,
             ))
 
     # --- Aggregate by capability ---
@@ -130,6 +133,7 @@ def compute_candidate_scores(db: DbSession, candidate_id: str) -> Dict:
                 capability=capability,
                 score=cap_score,
                 sample_size=sample_size,
+                organization_id=org_id,
             ))
 
     db.commit()

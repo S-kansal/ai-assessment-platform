@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session as DbSession
 
 from app.models.task_run import TaskRun
 from app.models.task import Task
+from app.models.session import Session
 from app.models.telemetry import TelemetryEvent
 from app.evaluation.models import EvaluationResult
 from app.evaluation.metrics import extract_metrics
@@ -35,6 +36,10 @@ def evaluate_task_run(db: DbSession, task_run_id: str) -> Dict:
         raise ValueError(f"Task run '{task_run_id}' not found")
 
     debug_log.append(f"Loaded task_run: {task_run_id} (status={task_run.status})")
+
+    # Resolve organization_id from session
+    session = db.query(Session).filter(Session.id == task_run.session_id).first()
+    org_id = session.organization_id if session else None
 
     # --- Step 2: Load task configuration ---
     task = db.query(Task).filter(Task.id == task_run.task_id).first()
@@ -110,6 +115,7 @@ def evaluate_task_run(db: DbSession, task_run_id: str) -> Dict:
         .first()
     )
     fields = dict(
+        organization_id=org_id,
         diagnostic_score=diagnostic_score,
         success_score=success_score,
         efficiency_score=efficiency_score,

@@ -76,7 +76,7 @@ export default function TaskPage() {
 
             const result = await startAssessment(candId);
             setAssessmentId(result.assessment_id);
-            setSessionId(result.assessment_id); // for telemetry context
+            setSessionId(result.session_id);
             setTaskRunId(result.task_run_id);
             setTaskDescription(result.description);
             setTaskId(result.first_task);
@@ -93,14 +93,15 @@ export default function TaskPage() {
     // ── Telemetry helper ──────────────────────────────
     const emitTelemetry = useCallback(
         (eventType, payload) => {
-            if (sessionId && taskRunId) {
-                sendTelemetry(sessionId, taskRunId, eventType, {
+            if (sessionId && taskId) {
+                sendTelemetry(sessionId, taskId, eventType, {
                     ...payload,
                     assessment_id: assessmentId,
+                    task_run_id: taskRunId,
                 }).catch(() => { });
             }
         },
-        [sessionId, taskRunId, assessmentId]
+        [sessionId, taskId, taskRunId, assessmentId]
     );
 
     // ── Simulation ────────────────────────────────────
