@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { useAuth } from '../context/AuthContext';
-import api from '../services/api';
+import { useAuth } from '../context/useAuth.js';
+import api from '../services/api.js';
 
 export default function PilotReport() {
     const { token } = useAuth();

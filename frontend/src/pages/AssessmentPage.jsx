@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import Panel from '../components/Panel.jsx';
 import { useAuth } from '../context/useAuth.js';
@@ -29,6 +29,7 @@ export default function AssessmentPage() {
   const [fixSummary, setFixSummary] = useState('');
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
+  const hasLoggedInspectionRef = useRef(false);
 
   const browserSessionId = useMemo(
     () => `session-${user.candidateId}-${Math.random().toString(36).slice(2, 10)}`,
@@ -81,12 +82,30 @@ export default function AssessmentPage() {
 
   async function handleRunSimulation() {
     try {
+      hasLoggedInspectionRef.current = false;
+      await sendTelemetry({
+        task_run_id: taskRunId,
+        event_type: 'prompt_submitted',
+        monotonic_timestamp_ms: nextMonotonicTimestamp(),
+        payload: {
+          prompt_text: promptText,
+        },
+      });
+      await sendTelemetry({
+        task_run_id: taskRunId,
+        event_type: 'query_submit',
+        monotonic_timestamp_ms: nextMonotonicTimestamp(),
+        payload: {
+          query_text: queryText,
+        },
+      });
       const result = await runSimulation({
         task_run_id: taskRunId,
         prompt_text: promptText,
         query_text: queryText,
       });
       setSimulation(result);
+      hasLoggedInspectionRef.current = false;
       await sendTelemetry({
         task_run_id: taskRunId,
         event_type: 'simulation_output_view',
@@ -100,11 +119,32 @@ export default function AssessmentPage() {
     }
   }
 
+  async function handleLogsInspection() {
+    if (!taskRunId || !simulation || hasLoggedInspectionRef.current) {
+      return;
+    }
+
+    hasLoggedInspectionRef.current = true;
+    try {
+      await sendTelemetry({
+        task_run_id: taskRunId,
+        event_type: 'log_inspection',
+        monotonic_timestamp_ms: nextMonotonicTimestamp(),
+        payload: {
+          task_run_id: taskRunId,
+          simulation_run_id: simulation.id,
+        },
+      });
+    } catch {
+      hasLoggedInspectionRef.current = false;
+    }
+  }
+
   async function handleSubmit() {
     try {
       await sendTelemetry({
         task_run_id: taskRunId,
-        event_type: 'solution_submit',
+        event_type: 'solution_submitted',
         monotonic_timestamp_ms: nextMonotonicTimestamp(),
         payload: {
           prompt_length: promptText.length,
@@ -143,20 +183,6 @@ export default function AssessmentPage() {
       monotonic_timestamp_ms: nextMonotonicTimestamp(),
       payload: {
         prompt_preview: value.slice(0, 120),
-      },
-    });
-  }
-
-  async function emitQueryTelemetry(value) {
-    if (!taskRunId) {
-      return;
-    }
-    await sendTelemetry({
-      task_run_id: taskRunId,
-      event_type: 'query_submit',
-      monotonic_timestamp_ms: nextMonotonicTimestamp(),
-      payload: {
-        query_preview: value.slice(0, 120),
       },
     });
   }
@@ -205,10 +231,7 @@ export default function AssessmentPage() {
               />
               <input
                 value={queryText}
-                onChange={(event) => {
-                  setQueryText(event.target.value);
-                  void emitQueryTelemetry(event.target.value);
-                }}
+                onChange={(event) => setQueryText(event.target.value)}
                 placeholder="Enter a query"
               />
               <button className="primary-button" onClick={handleRunSimulation} disabled={!taskRunId}>
@@ -219,7 +242,7 @@ export default function AssessmentPage() {
 
           <Panel title="Simulation Output">
             {simulation ? (
-              <div className="stack">
+              <div className="stack" onMouseEnter={() => void handleLogsInspection()}>
                 <p><strong>Response</strong></p>
                 <pre>{simulation.response_text}</pre>
                 <p><strong>Retrieved Chunks</strong></p>

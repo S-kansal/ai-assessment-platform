@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL;
 let authToken = localStorage.getItem('token');
 let unauthorizedHandler = null;
 
@@ -100,3 +100,5 @@ export async function getDashboardTaskRuns(candidateId) {
 export async function getReplay(taskRunId) {
   return unwrap(await client.get(`/dashboard/task-runs/${taskRunId}/replay`));
 }
+
+export default client;
