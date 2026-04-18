@@ -1,28 +1,34 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, String, DateTime, ForeignKey
-from app.database import Base
+from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.db.session import Base
 
 
 class Candidate(Base):
-    """A candidate registered for assessment."""
-
     __tablename__ = "candidates"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "email", name="uq_candidates_org_email"),
+    )
 
-    id = Column(
-        String(36),
-        primary_key=True,
-        default=lambda: str(uuid.uuid4()),
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id"),
+        index=True,
+        nullable=False,
     )
-    organization_id = Column(
-        String(36), ForeignKey("organizations.id"), nullable=True,
-    )
-    name = Column(String(255), nullable=False)
-    email = Column(String(255), unique=True, nullable=False)
-    created_at = Column(
-        DateTime,
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
 
+    organization: Mapped["Organization"] = relationship(back_populates="candidates")
+    user: Mapped["User | None"] = relationship(back_populates="candidate", uselist=False)
+    assessments: Mapped[list["Assessment"]] = relationship(back_populates="candidate")
