@@ -1,211 +1,156 @@
-"""Assessment orchestrator — manages multi-task assessment lifecycle.
-
-Flow:
-1. start_assessment → create assessment, assign first task
-2. advance_assessment → complete current task, assign next or finish
-3. complete_assessment → mark done, trigger scoring
-"""
+from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Dict, Optional
 
-from sqlalchemy.orm import Session as DbSession
-from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from app.assessment.models import Assessment, AssessmentTask
-from app.assessment import assessment_service as svc
-from app.tasks.task_service import start_task, finish_task
-from app.evaluation.evaluator import evaluate_task_run
-from app.evaluation.models import EvaluationResult
-from app.scoring.scoring_service import compute_candidate_scores
-from app.models.assessment_result import AssessmentResult
+from app.assessment.sequencer import build_task_sequence
+from app.core.exceptions import ConflictError, NotFoundError
+from app.evaluation.engine import evaluate_task_run
+from app.models.assessment import Assessment
+from app.models.task import Task
+from app.models.task_run import TaskRun
+from app.scoring.engine import compute_scoring_result
+from app.tasks.definitions import list_task_definitions
+from app.tasks.lifecycle import (
+    complete_status,
+    get_assessment_expiry,
+    start_status,
+    timeout_status,
+)
 
 
-# ── Default task sequence for MVP ──────────────────────────────
-DEFAULT_TASK_IDS = ["rag_debug_01", "rag_debug_02", "rag_debug_03"]
+def tenant_task_id(organization_id: str, definition_id: str) -> str:
+    return f"{organization_id.split('-', 1)[0]}:{definition_id}"
 
 
-def start_assessment(db: DbSession, candidate_id: str, session_id: str,
-                     task_ids: list = None, org_id: str = None) -> Dict:
-    """Create an assessment and start the first task."""
-    tasks = task_ids or DEFAULT_TASK_IDS
-
-    assessment = svc.create_assessment(db, candidate_id, session_id, tasks, org_id=org_id)
-
-    # Mark assessment as running
-    now = datetime.now(timezone.utc)
-    assessment.status = "running"
-    assessment.started_at = now
-    db.commit()
-
-    # Start first task
-    first_at = svc.get_next_pending_task(db, assessment.id)
-    if not first_at:
-        raise HTTPException(status_code=400, detail="No tasks in assessment")
-
-    task_result = start_task(db, session_id, first_at.task_id)
-    first_at.task_run_id = task_result["task_run_id"]
-    first_at.status = "running"
-    first_at.started_at = now
-    db.commit()
-
-    return {
-        "assessment_id": assessment.id,
-        "session_id": session_id,
-        "status": assessment.status,
-        "first_task": first_at.task_id,
-        "task_run_id": task_result["task_run_id"],
-        "description": task_result["description"],
-        "total_tasks": len(tasks),
-        "current_task_index": 1,
+def ensure_task_catalog(db: Session, organization_id: str) -> None:
+    existing_task_ids = {
+        task.id
+        for task in db.scalars(
+            select(Task).where(Task.organization_id == organization_id)
+        )
     }
+    for definition in list_task_definitions():
+        scoped_task_id = tenant_task_id(organization_id, definition["id"])
+        if scoped_task_id in existing_task_ids:
+            continue
+        db.add(
+            Task(
+                id=scoped_task_id,
+                organization_id=organization_id,
+                title=definition["title"],
+                task_type=definition["task_type"],
+                failure_modes=definition["failure_modes"],
+                expected_diagnostic_path=definition["expected_diagnostic_path"],
+                scoring_rubric=definition["rubric"],
+                scenario_key=definition["scenario_key"],
+            )
+        )
+    db.flush()
 
 
-def advance_assessment(db: DbSession, assessment_id: str,
-                       task_run_id: str, solution: str = None) -> Dict:
-    """Complete current task, evaluate it, and advance to the next task.
-
-    Returns the next task info or assessment completion status.
-    """
-    assessment = svc.get_assessment(db, assessment_id)
-    if assessment.status != "running":
-        raise HTTPException(status_code=400, detail="Assessment is not running")
-
-    # Find the current running task
-    current = svc.get_current_task(db, assessment_id)
-    if not current:
-        raise HTTPException(status_code=400, detail="No running task found")
-
-    if current.task_run_id != task_run_id:
-        raise HTTPException(status_code=400, detail="Task run ID mismatch")
-
-    # Complete the task
-    now = datetime.now(timezone.utc)
-    finish_task(db, task_run_id, solution)
-    current.status = "completed"
-    current.completed_at = now
-    db.commit()
-
-    # Evaluate the task
-    try:
-        evaluate_task_run(db, task_run_id)
-    except Exception as e:
-        from app.core.logging import get_logger
-        get_logger("orchestrator").warning("evaluation_failed", task_run_id=task_run_id, error=str(e))
-
-    # Check for next task
-    all_tasks = svc.get_assessment_tasks(db, assessment_id)
-    completed_count = sum(1 for t in all_tasks if t.status == "completed")
-    total = len(all_tasks)
-
-    next_at = svc.get_next_pending_task(db, assessment_id)
-    if next_at:
-        # Start next task
-        task_result = start_task(db, assessment.session_id, next_at.task_id)
-        next_at.task_run_id = task_result["task_run_id"]
-        next_at.status = "running"
-        next_at.started_at = now
-        db.commit()
-
-        return {
-            "status": "next_task",
-            "task_id": next_at.task_id,
-            "task_run_id": task_result["task_run_id"],
-            "description": task_result["description"],
-            "completed_tasks": completed_count,
-            "total_tasks": total,
-            "current_task_index": completed_count + 1,
-        }
-    else:
-        # All tasks done — complete assessment
-        return _complete_assessment(db, assessment, all_tasks)
+def create_assessment(
+    db: Session,
+    organization_id: str,
+    candidate_id: str,
+    title: str,
+    order_mode: str,
+    browser_session_id: str,
+) -> Assessment:
+    ensure_task_catalog(db, organization_id)
+    task_ids = [
+        tenant_task_id(organization_id, definition_id)
+        for definition_id in build_task_sequence(order_mode)
+    ]
+    assessment = Assessment(
+        organization_id=organization_id,
+        candidate_id=candidate_id,
+        title=title,
+        order_mode=order_mode,
+        task_ids=task_ids,
+        browser_session_id=browser_session_id,
+        status="created",
+        expires_at=get_assessment_expiry(),
+    )
+    db.add(assessment)
+    db.flush()
+    return assessment
 
 
-def _complete_assessment(db: DbSession, assessment: Assessment,
-                         all_tasks: list) -> Dict:
-    """Finalize assessment and trigger scoring."""
-    now = datetime.now(timezone.utc)
-    assessment.status = "completed"
-    assessment.completed_at = now
-    db.commit()
-
-    # Trigger scoring aggregation
-    try:
-        scores = compute_candidate_scores(db, assessment.candidate_id)
-    except Exception:
-        scores = {}
-
-    # Build evaluation summary from task runs
-    eval_summary = {"tasks_completed": len(all_tasks), "task_details": []}
-    for at in all_tasks:
-        if at.task_run_id:
-            ev = db.query(EvaluationResult).filter(
-                EvaluationResult.task_run_id == at.task_run_id
-            ).first()
-            if ev:
-                eval_summary["task_details"].append({
-                    "task_id": at.task_id,
-                    "diagnostic": ev.diagnostic_score,
-                    "efficiency": ev.efficiency_score,
-                })
-    eff_scores = [d["efficiency"] for d in eval_summary["task_details"] if d.get("efficiency")]
-    eval_summary["avg_efficiency"] = round(sum(eff_scores) / len(eff_scores), 2) if eff_scores else 0
-
-    # Compute final_score as average of capabilities
-    caps = scores.get("capabilities", {})
-    final_score = round(sum(caps.values()) / len(caps), 1) if caps else 0
-
-    # Store assessment result snapshot (upsert by assessment_id)
-    existing_ar = db.query(AssessmentResult).filter(
-        AssessmentResult.assessment_id == assessment.id
-    ).first()
-    if existing_ar:
-        existing_ar.final_score = final_score
-        existing_ar.capability_profile = caps
-        existing_ar.evaluation_summary = eval_summary
-    else:
-        db.add(AssessmentResult(
-            assessment_id=assessment.id,
-            candidate_id=assessment.candidate_id,
-            session_id=assessment.session_id,
-            final_score=final_score,
-            capability_profile=caps,
-            evaluation_summary=eval_summary,
-        ))
-    db.commit()
-
-    return {
-        "status": "completed",
-        "completed_tasks": len(all_tasks),
-        "total_tasks": len(all_tasks),
-        "scores": scores,
-    }
+def start_assessment(db: Session, assessment: Assessment) -> TaskRun:
+    if assessment.status not in {"created", "active"}:
+        raise ConflictError("Assessment cannot be started from its current state")
+    assessment.status = "active"
+    assessment.started_at = assessment.started_at or datetime.now(timezone.utc)
+    return start_next_task_run(db, assessment)
 
 
-def get_assessment_status(db: DbSession, assessment_id: str) -> Dict:
-    """Get current assessment status including task progress."""
-    assessment = svc.get_assessment(db, assessment_id)
-    all_tasks = svc.get_assessment_tasks(db, assessment_id)
+def start_next_task_run(db: Session, assessment: Assessment) -> TaskRun:
+    if assessment.current_task_index >= len(assessment.task_ids):
+        raise ConflictError("Assessment has no remaining tasks")
+    task_id = assessment.task_ids[assessment.current_task_index]
+    task_run = TaskRun(
+        organization_id=assessment.organization_id,
+        assessment_id=assessment.id,
+        candidate_id=assessment.candidate_id,
+        task_id=task_id,
+        sequence_index=assessment.current_task_index,
+        status=start_status(),
+        expires_at=assessment.expires_at,
+    )
+    db.add(task_run)
+    db.flush()
+    return task_run
 
-    completed = sum(1 for t in all_tasks if t.status == "completed")
-    current = svc.get_current_task(db, assessment_id)
 
-    tasks_detail = []
-    for t in all_tasks:
-        tasks_detail.append({
-            "task_id": t.task_id,
-            "task_run_id": t.task_run_id,
-            "order_index": t.order_index,
-            "status": t.status,
-        })
+def submit_task_run(
+    db: Session,
+    task_run: TaskRun,
+    final_prompt: str,
+    final_query: str,
+    submitted_root_cause: str,
+    submitted_fix_summary: str,
+) -> TaskRun:
+    task_run.final_prompt = final_prompt
+    task_run.final_query = final_query
+    task_run.submitted_root_cause = submitted_root_cause
+    task_run.submitted_fix_summary = submitted_fix_summary
+    task_run.status = complete_status()
+    task_run.completed_at = datetime.now(timezone.utc)
+    db.flush()
+    return task_run
 
-    return {
-        "assessment_id": assessment.id,
-        "candidate_id": assessment.candidate_id,
-        "status": assessment.status,
-        "current_task": current.task_id if current else None,
-        "current_task_run_id": current.task_run_id if current else None,
-        "completed_tasks": completed,
-        "total_tasks": len(all_tasks),
-        "tasks": tasks_detail,
-    }
+
+def finalize_task_and_advance(
+    db: Session,
+    assessment: Assessment,
+    task_run: TaskRun,
+) -> tuple[TaskRun | None, bool]:
+    task = db.scalar(
+        select(Task).where(
+            Task.id == task_run.task_id,
+            Task.organization_id == task_run.organization_id,
+        )
+    )
+    if task is None:
+        raise NotFoundError("Task not found for task run")
+
+    evaluate_task_run(db, task_run, task)
+    assessment.current_task_index += 1
+    if assessment.current_task_index >= len(assessment.task_ids):
+        assessment.status = "completed"
+        assessment.completed_at = datetime.now(timezone.utc)
+        compute_scoring_result(db, assessment.id, assessment.organization_id)
+        db.flush()
+        return None, True
+
+    next_task_run = start_next_task_run(db, assessment)
+    db.flush()
+    return next_task_run, False
+
+
+def timeout_assessment(assessment: Assessment) -> None:
+    assessment.status = timeout_status()
+    assessment.completed_at = datetime.now(timezone.utc)
