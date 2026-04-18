@@ -1,14 +1,63 @@
 import { useEffect, useState } from 'react';
 
+import CreateCandidateModal from '../components/CreateCandidateModal.jsx';
 import Panel from '../components/Panel.jsx';
+import StartAssessmentModal from '../components/StartAssessmentModal.jsx';
 import { useAuth } from '../context/useAuth.js';
 import {
-  createCandidate,
   getDashboardCandidateProfile,
   getDashboardCandidates,
   getDashboardTaskRuns,
   getReplay,
 } from '../services/api.js';
+
+const STATUS_META = {
+  no_assessment: { label: 'No Assessment', className: 'status-badge status-neutral' },
+  active: { label: 'Active', className: 'status-badge status-active' },
+  completed: { label: 'Completed', className: 'status-badge status-completed' },
+  timed_out: { label: 'Timed Out', className: 'status-badge status-timed-out' },
+  unknown: { label: 'Unknown', className: 'status-badge status-neutral' },
+};
+
+function normalizeAssessmentStatus(status) {
+  switch (status) {
+    case 'active':
+    case 'started':
+    case 'created':
+      return 'active';
+    case 'completed':
+      return 'completed';
+    case 'timed_out':
+      return 'timed_out';
+    default:
+      return 'unknown';
+  }
+}
+
+function deriveAssessmentStatus(assessments) {
+  if (!assessments?.length) {
+    return 'no_assessment';
+  }
+
+  const normalizedStatuses = assessments.map((assessment) => normalizeAssessmentStatus(assessment.status));
+
+  if (normalizedStatuses.includes('active')) {
+    return 'active';
+  }
+  if (normalizedStatuses.includes('timed_out')) {
+    return 'timed_out';
+  }
+  if (normalizedStatuses.includes('completed')) {
+    return 'completed';
+  }
+
+  return normalizedStatuses[0] ?? 'unknown';
+}
+
+function StatusBadge({ status }) {
+  const meta = STATUS_META[status] ?? STATUS_META.unknown;
+  return <span className={meta.className}>{meta.label}</span>;
+}
 
 export default function DashboardPage() {
   const { logout, user } = useAuth();
@@ -18,7 +67,13 @@ export default function DashboardPage() {
   const [profile, setProfile] = useState(null);
   const [taskRuns, setTaskRuns] = useState([]);
   const [replay, setReplay] = useState(null);
-  const [candidateForm, setCandidateForm] = useState({ name: '', email: '', password: '' });
+  const [candidateStatuses, setCandidateStatuses] = useState({});
+  const [isCreateCandidateModalOpen, setIsCreateCandidateModalOpen] = useState(false);
+  const [isStartAssessmentModalOpen, setIsStartAssessmentModalOpen] = useState(false);
+  const [isCandidatesLoading, setIsCandidatesLoading] = useState(false);
+  const [isProfileLoading, setIsProfileLoading] = useState(false);
+  const [isReplayLoading, setIsReplayLoading] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
   const [error, setError] = useState('');
 
   function sortTaskRuns(rows) {
@@ -32,16 +87,39 @@ export default function DashboardPage() {
     });
   }
 
+  async function hydrateCandidateStatuses(rows) {
+    const statuses = await Promise.all(
+      rows.map(async (candidate) => {
+        try {
+          const candidateProfile = await getDashboardCandidateProfile(candidate.id);
+          return [candidate.id, deriveAssessmentStatus(candidateProfile.assessments)];
+        } catch {
+          return [candidate.id, null];
+        }
+      })
+    );
+
+    setCandidateStatuses((current) => ({
+      ...current,
+      ...Object.fromEntries(statuses.filter(([, status]) => Boolean(status))),
+    }));
+  }
+
   useEffect(() => {
     async function loadCandidates() {
+      setIsCandidatesLoading(true);
+      setError('');
       try {
         const rows = await getDashboardCandidates();
         setCandidates(rows);
         if (rows[0]) {
           setSelectedCandidateId(rows[0].id);
         }
+        hydrateCandidateStatuses(rows);
       } catch (requestError) {
-        setError(requestError.response?.data?.error?.message || 'Unable to load candidates');
+        setError(requestError.message || requestError.response?.data?.error?.message || 'Unable to load candidates');
+      } finally {
+        setIsCandidatesLoading(false);
       }
     }
     loadCandidates();
@@ -49,9 +127,15 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!selectedCandidateId) {
+      setProfile(null);
+      setTaskRuns([]);
+      setSelectedTaskRunId(null);
+      setReplay(null);
       return;
     }
     async function loadCandidate() {
+      setIsProfileLoading(true);
+      setError('');
       try {
         const [candidateProfile, candidateTaskRuns] = await Promise.all([
           getDashboardCandidateProfile(selectedCandidateId),
@@ -60,6 +144,10 @@ export default function DashboardPage() {
         const sortedTaskRuns = sortTaskRuns(candidateTaskRuns);
         setProfile(candidateProfile);
         setTaskRuns(sortedTaskRuns);
+        setCandidateStatuses((current) => ({
+          ...current,
+          [selectedCandidateId]: deriveAssessmentStatus(candidateProfile.assessments),
+        }));
         const firstTaskRunId = sortedTaskRuns[0]?.task_run?.id ?? null;
         setSelectedTaskRunId((currentTaskRunId) => {
           if (currentTaskRunId && sortedTaskRuns.some((row) => row.task_run.id === currentTaskRunId)) {
@@ -69,12 +157,11 @@ export default function DashboardPage() {
         });
         if (!firstTaskRunId) {
           setReplay(null);
-        } else {
-          const replayData = await getReplay(firstTaskRunId);
-          setReplay(replayData);
         }
       } catch (requestError) {
-        setError(requestError.response?.data?.error?.message || 'Unable to load candidate details');
+        setError(requestError.message || requestError.response?.data?.error?.message || 'Unable to load candidate details');
+      } finally {
+        setIsProfileLoading(false);
       }
     }
     loadCandidate();
@@ -82,34 +169,55 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!selectedTaskRunId) {
+      setReplay(null);
       return;
     }
 
     async function loadReplay() {
+      setIsReplayLoading(true);
+      setError('');
       try {
         const replayData = await getReplay(selectedTaskRunId);
         setReplay(replayData);
       } catch (requestError) {
-        setError(requestError.response?.data?.error?.message || 'Unable to load session replay');
+        setError(requestError.message || requestError.response?.data?.error?.message || 'Unable to load session replay');
+      } finally {
+        setIsReplayLoading(false);
       }
     }
 
     loadReplay();
   }, [selectedTaskRunId]);
 
-  async function handleCreateCandidate(event) {
-    event.preventDefault();
-    try {
-      await createCandidate(candidateForm);
-      setCandidateForm({ name: '', email: '', password: '' });
-      const rows = await getDashboardCandidates();
-      setCandidates(rows);
-    } catch (requestError) {
-      setError(requestError.response?.data?.error?.message || 'Unable to create candidate');
-    }
+  const selectedTaskRun = taskRuns.find((row) => row.task_run.id === selectedTaskRunId) ?? null;
+  const selectedCandidateStatus = selectedCandidateId ? candidateStatuses[selectedCandidateId] ?? deriveAssessmentStatus(profile?.assessments) : 'unknown';
+
+  function handleCandidateCreated(newCandidate) {
+    setCandidates((current) => [newCandidate, ...current.filter((candidate) => candidate.id !== newCandidate.id)]);
+    setCandidateStatuses((current) => ({ ...current, [newCandidate.id]: 'no_assessment' }));
+    setSelectedCandidateId(newCandidate.id);
+    setSuccessMessage(`Candidate ${newCandidate.name} was created successfully.`);
+    setError('');
   }
 
-  const selectedTaskRun = taskRuns.find((row) => row.task_run.id === selectedTaskRunId) ?? null;
+  function handleAssessmentStarted({ assessmentId, taskRunId, title }) {
+    setProfile((current) => {
+      if (!current) {
+        return current;
+      }
+      return {
+        ...current,
+        assessments: [
+          { id: assessmentId, title, status: 'active', task_ids: [] },
+          ...(current.assessments ?? []),
+        ],
+      };
+    });
+    setCandidateStatuses((current) => ({ ...current, [selectedCandidateId]: 'active' }));
+    setSelectedTaskRunId(taskRunId ?? null);
+    setSuccessMessage(`Assessment "${title}" is now active.`);
+    setError('');
+  }
 
   return (
     <main className="page">
@@ -124,54 +232,83 @@ export default function DashboardPage() {
       </header>
 
       {error ? <p className="error-banner">{error}</p> : null}
+      {successMessage ? <p className="success-banner">{successMessage}</p> : null}
+
+      <CreateCandidateModal
+        isOpen={isCreateCandidateModalOpen}
+        onClose={() => setIsCreateCandidateModalOpen(false)}
+        onSuccess={handleCandidateCreated}
+      />
+      <StartAssessmentModal
+        candidate={profile?.candidate ?? null}
+        isOpen={isStartAssessmentModalOpen}
+        onClose={() => setIsStartAssessmentModalOpen(false)}
+        onSuccess={handleAssessmentStarted}
+      />
 
       <div className="dashboard-grid">
-        {user.role === 'admin' ? (
-          <Panel title="Create Candidate">
-            <form className="stack" onSubmit={handleCreateCandidate}>
-              <input
-                value={candidateForm.name}
-                onChange={(event) => setCandidateForm({ ...candidateForm, name: event.target.value })}
-                placeholder="Candidate name"
-              />
-              <input
-                value={candidateForm.email}
-                onChange={(event) => setCandidateForm({ ...candidateForm, email: event.target.value })}
-                placeholder="candidate@company.com"
-                type="email"
-                autoComplete="username"
-              />
-              <input
-                value={candidateForm.password}
-                onChange={(event) => setCandidateForm({ ...candidateForm, password: event.target.value })}
-                placeholder="temporary password"
-                type="password"
-                autoComplete="new-password"
-              />
-              <button className="primary-button" type="submit">
-                Add Candidate
+        <Panel
+          title="Candidates"
+          actions={
+            user.role === 'admin' ? (
+              <button className="primary-button" onClick={() => setIsCreateCandidateModalOpen(true)} type="button">
+                Create Candidate
               </button>
-            </form>
-          </Panel>
-        ) : null}
-
-        <Panel title="Candidates">
+            ) : null
+          }
+        >
           <div className="stack">
+            {isCandidatesLoading ? <p>Loading candidates...</p> : null}
+            {!isCandidatesLoading && !candidates.length ? <p>No candidates available yet.</p> : null}
             {candidates.map((candidate) => (
               <button
                 key={candidate.id}
                 className={`list-button ${candidate.id === selectedCandidateId ? 'selected' : ''}`}
                 onClick={() => setSelectedCandidateId(candidate.id)}
+                type="button"
               >
-                <span>{candidate.name}</span>
-                <span>{candidate.email}</span>
+                <span className="candidate-list-copy">
+                  <strong>{candidate.name}</strong>
+                  <span>{candidate.email}</span>
+                </span>
+                <StatusBadge status={candidateStatuses[candidate.id] ?? 'unknown'} />
               </button>
             ))}
           </div>
         </Panel>
 
+        <Panel
+          title="Candidate Profile"
+          actions={
+            user.role === 'admin' && profile?.candidate ? (
+              <button className="primary-button" onClick={() => setIsStartAssessmentModalOpen(true)} type="button">
+                Start Assessment
+              </button>
+            ) : null
+          }
+        >
+          {isProfileLoading ? (
+            <p>Loading candidate profile...</p>
+          ) : profile?.candidate ? (
+            <div className="stack">
+              <div className="profile-header">
+                <div className="stack compact-stack">
+                  <p><strong>{profile.candidate.name}</strong></p>
+                  <p>{profile.candidate.email}</p>
+                </div>
+                <StatusBadge status={selectedCandidateStatus} />
+              </div>
+              <p>Candidate ID: {profile.candidate.id}</p>
+            </div>
+          ) : (
+            <p>Select a candidate to review their profile.</p>
+          )}
+        </Panel>
+
         <Panel title="Capability Profile">
-          {profile?.score ? (
+          {isProfileLoading ? (
+            <p>Loading capability scores...</p>
+          ) : profile?.score ? (
             <div className="stack">
               <p>Aggregate score: <strong>{profile.score.aggregate_score}</strong></p>
               {Object.entries(profile.score.raw_scores).map(([capability, score]) => (
@@ -186,12 +323,16 @@ export default function DashboardPage() {
         </Panel>
 
         <Panel title="Assessments">
-          {profile?.assessments?.length ? (
+          {isProfileLoading ? (
+            <p>Loading assessments...</p>
+          ) : profile?.assessments?.length ? (
             <div className="stack">
               {profile.assessments.map((assessment) => (
                 <div key={assessment.id} className="data-card">
-                  <p><strong>{assessment.title}</strong></p>
-                  <p>Status: {assessment.status}</p>
+                  <div className="profile-header">
+                    <p><strong>{assessment.title}</strong></p>
+                    <StatusBadge status={normalizeAssessmentStatus(assessment.status)} />
+                  </div>
                   <p>Tasks: {assessment.task_ids.length}</p>
                 </div>
               ))}
@@ -203,6 +344,8 @@ export default function DashboardPage() {
 
         <Panel title="Task Runs">
           <div className="stack">
+            {isProfileLoading ? <p>Loading task runs...</p> : null}
+            {!isProfileLoading && !taskRuns.length ? <p>No task runs available yet.</p> : null}
             {taskRuns.map((row) => (
               <button
                 key={row.task_run.id}
@@ -225,7 +368,9 @@ export default function DashboardPage() {
         </Panel>
 
         <Panel title="Session Replay">
-          {replay ? (
+          {isReplayLoading ? (
+            <p>Loading session replay...</p>
+          ) : replay ? (
             <div className="stack">
               <p>
                 <strong>Currently Replaying:</strong>{' '}

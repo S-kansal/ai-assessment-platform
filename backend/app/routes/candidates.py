@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import (
@@ -16,7 +16,7 @@ from app.services.candidates import create_candidate, get_candidate, list_candid
 router = APIRouter(prefix="/candidates", tags=["candidates"])
 
 
-@router.post("")
+@router.post("", status_code=status.HTTP_201_CREATED)
 def create_candidate_route(
     body: CandidateCreateRequest,
     user: AuthContext = Depends(require_roles("admin")),

@@ -82,6 +82,18 @@ def create_assessment(
 def start_assessment(db: Session, assessment: Assessment) -> TaskRun:
     if assessment.status not in {"created", "active"}:
         raise ConflictError("Assessment cannot be started from its current state")
+
+    if assessment.status == "active":
+        active_task_run = db.scalar(
+            select(TaskRun).where(
+                TaskRun.assessment_id == assessment.id,
+                TaskRun.organization_id == assessment.organization_id,
+                TaskRun.status.in_(("active", "started")),
+            )
+        )
+        if active_task_run is not None:
+            return active_task_run
+
     assessment.status = "active"
     assessment.started_at = assessment.started_at or datetime.now(timezone.utc)
     return start_next_task_run(db, assessment)

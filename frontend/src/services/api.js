@@ -45,6 +45,20 @@ function unwrap(response) {
   return response.data.data;
 }
 
+function getReadableError(error, fallbackMessage) {
+  return error.response?.data?.error?.message || fallbackMessage;
+}
+
+function getCompatUrl(path) {
+  if (API_BASE_URL === '/api') {
+    return path;
+  }
+  if (API_BASE_URL.endsWith('/api')) {
+    return `${API_BASE_URL.slice(0, -4)}${path}`;
+  }
+  return path;
+}
+
 export async function login(email, password) {
   return unwrap(await client.post('/auth/login', { email, password }));
 }
@@ -54,7 +68,11 @@ export async function registerOrganization(payload) {
 }
 
 export async function createCandidate(payload) {
-  return unwrap(await client.post('/candidates', payload));
+  try {
+    return unwrap(await client.post('/candidates', payload));
+  } catch (error) {
+    throw new Error(getReadableError(error, 'Unable to create candidate'));
+  }
 }
 
 export async function listCandidates() {
@@ -62,7 +80,19 @@ export async function listCandidates() {
 }
 
 export async function createAssessment(payload) {
-  return unwrap(await client.post('/assessments', payload));
+  const normalizedPayload = {
+    order_mode: 'fixed',
+    browser_session_id: `admin-${payload.candidate_id}-${Date.now()}`,
+    ...payload,
+  };
+
+  try {
+    const assessment = unwrap(await client.post('/assessments', normalizedPayload));
+    const assessmentId = assessment.id ?? assessment.assessment_id ?? assessment.data?.id ?? assessment.data?.assessment_id;
+    return assessmentId ? { ...assessment, id: assessmentId } : assessment;
+  } catch (error) {
+    throw new Error(getReadableError(error, 'Unable to create assessment'));
+  }
 }
 
 export async function getAssessment(assessmentId) {
@@ -99,6 +129,20 @@ export async function getDashboardTaskRuns(candidateId) {
 
 export async function getReplay(taskRunId) {
   return unwrap(await client.get(`/dashboard/task-runs/${taskRunId}/replay`));
+}
+
+export async function startAssessment(assessmentId) {
+  try {
+    const result = unwrap(
+      await client.post(getCompatUrl(`/assessments/${assessmentId}/start`), undefined, {
+        baseURL: '',
+      })
+    );
+    const taskRunId = result.task_run_id ?? result.first_task_run_id ?? result.data?.task_run_id;
+    return taskRunId ? { ...result, task_run_id: taskRunId } : result;
+  } catch (error) {
+    throw new Error(getReadableError(error, 'Unable to start assessment'));
+  }
 }
 
 export default client;
