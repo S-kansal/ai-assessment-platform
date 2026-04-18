@@ -151,6 +151,23 @@ def finalize_task_and_advance(
     return next_task_run, False
 
 
-def timeout_assessment(assessment: Assessment) -> None:
+def timeout_assessment(db: Session, assessment: Assessment) -> None:
+    if assessment.status in {"completed", "timed_out", "abandoned"}:
+        return
+
+    now = datetime.now(timezone.utc)
     assessment.status = timeout_status()
-    assessment.completed_at = datetime.now(timezone.utc)
+    assessment.completed_at = now
+
+    active_task_runs = list(
+        db.scalars(
+            select(TaskRun).where(
+                TaskRun.assessment_id == assessment.id,
+                TaskRun.organization_id == assessment.organization_id,
+                TaskRun.status.in_(("active", "started")),
+            )
+        )
+    )
+    for task_run in active_task_runs:
+        task_run.status = timeout_status()
+        task_run.completed_at = now

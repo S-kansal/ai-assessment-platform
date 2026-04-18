@@ -15,6 +15,7 @@ ALLOWED_TELEMETRY_EVENTS = {
     "log_inspection",
     "retrieval_inspection",
     "solution_submit",
+    "solution_submitted",
     "task_started",
     "simulation_run",
 }

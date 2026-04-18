@@ -1,3 +1,6 @@
+import logging
+from datetime import datetime, timezone
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -11,6 +14,8 @@ from app.assessment.orchestrator import (
 from app.core.exceptions import ConflictError, NotFoundError
 from app.models.assessment import Assessment
 from app.models.task_run import TaskRun
+
+logger = logging.getLogger(__name__)
 
 
 def create_and_start_assessment(
@@ -100,5 +105,30 @@ def timeout_expired_assessment(
     assessment_id: str,
 ) -> Assessment:
     assessment = get_assessment(db, organization_id, assessment_id)
-    timeout_assessment(assessment)
+    timeout_assessment(db, assessment)
     return assessment
+
+
+def sweep_overdue_assessments(db: Session) -> list[str]:
+    now = datetime.now(timezone.utc)
+    overdue_assessments = list(
+        db.scalars(
+            select(Assessment).where(
+                Assessment.status.in_(("active", "started")),
+                Assessment.expires_at.is_not(None),
+                Assessment.expires_at < now,
+            )
+        )
+    )
+
+    timed_out_ids: list[str] = []
+    for assessment in overdue_assessments:
+        timeout_assessment(db, assessment)
+        if assessment.status == "timed_out":
+            timed_out_ids.append(assessment.id)
+            logger.info("Auto-timeout applied to assessment %s", assessment.id)
+
+    if timed_out_ids:
+        db.commit()
+
+    return timed_out_ids
